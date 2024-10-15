@@ -1,4 +1,4 @@
-/vendor/
+/src/vendor/
 composer.lock
 .vscode/
 .DS_Store
