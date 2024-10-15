@@ -1,0 +1,5 @@
+{
+    "require": {
+        "phpmyadmin/sql-parser": "^5.10"
+    }
+}
