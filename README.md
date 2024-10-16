@@ -13,7 +13,7 @@ This PHP script analyzes SQL query logs and database dumps to suggest optimal in
 4. Navigate to the directory containing the `advisor.php` script and run:
 
    ```
-   composer require phpmyadmin/sql-parser
+   composer install
    ```
 
    This will install the required PHPMyAdmin SQL Parser library.
