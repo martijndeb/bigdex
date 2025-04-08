@@ -5,17 +5,17 @@ require_once 'vendor/autoload.php';
 
 use PhpMyAdmin\SqlParser\Parser;
 use PhpMyAdmin\SqlParser\Statements\CreateStatement;
-use PhpMyAdmin\SqlParser\Statements\AlterStatement;
 use PhpMyAdmin\SqlParser\Statements\SelectStatement;
 use PhpMyAdmin\SqlParser\Components\Expression;
 use PhpMyAdmin\SqlParser\Components\Condition;
 
-if ($argc !== 3) {
-	die("Usage: php analyzer.php <query_log.sql> <database_dump.sql>\n");
+if ($argc < 3) {
+	die("Usage: php analyzer.php <query_log.sql> <database_dump.sql> [prefix_length]\n");
 }
 
 $queryLogFile = $argv[1];
 $dbDumpFile = $argv[2];
+$prefixLength = $argv[3] ?? 10;
 
 function parseFile($filename)
 {
@@ -27,22 +27,15 @@ function parseFile($filename)
 function extractColumnNames($expr, $tableColumns)
 {
 	$columns = [];
-
-	if ($expr instanceof Expression) {
-		if ($expr->column !== null && in_array($expr->column, $tableColumns)) {
+	if ($expr instanceof Expression && $expr->column !== null) {
+		if (in_array($expr->column, $tableColumns)) {
 			$columns[] = $expr->column;
 		}
-	} elseif ($expr instanceof Condition) {
-		if (isset($expr->identifiers)) {
-			foreach ($expr->identifiers as $identifier) {
-				if (strpos($identifier, '.') !== false) {
-					list(, $column) = explode('.', $identifier);
-				} else {
-					$column = $identifier;
-				}
-				if (in_array($column, $tableColumns)) {
-					$columns[] = $column;
-				}
+	} elseif ($expr instanceof Condition && isset($expr->identifiers)) {
+		foreach ($expr->identifiers as $identifier) {
+			$column = strpos($identifier, '.') !== false ? explode('.', $identifier)[1] : $identifier;
+			if (in_array($column, $tableColumns)) {
+				$columns[] = $column;
 			}
 		}
 	} elseif (is_array($expr)) {
@@ -50,60 +43,26 @@ function extractColumnNames($expr, $tableColumns)
 			$columns = array_merge($columns, extractColumnNames($subExpr, $tableColumns));
 		}
 	}
-
 	return array_unique(array_filter($columns));
 }
 
 function analyzeIndexes($queryLogStatements, $dbDumpStatements)
 {
 	$tables = [];
-	$missingIndexes = [];
-	$compoundIndexSuggestions = [];
-	$queryStats = [];
-	$optimizationSuggestions = [];
+	$indexUsage = [];
+	$queryComplexity = [];
 
 	foreach ($dbDumpStatements as $statement) {
 		if ($statement instanceof CreateStatement) {
 			$tableName = $statement->name->table ?? null;
+			if ($tableName === null) continue;
 
-			if ($tableName === null) {
-				continue;
-			}
-
-			$tables[$tableName] = [
-				'columns' => [],
-				'indexes' => []
-			];
-
+			$tables[$tableName] = ['columns' => [], 'indexes' => []];
 			foreach ($statement->fields as $field) {
-				$tables[$tableName]['columns'][$field->name] = $field->type->name ?? 'unknown';
+				$type = $field->type->name ?? 'unknown';
+				$tables[$tableName]['columns'][$field->name] = $type;
 				if ($field->key) {
 					$tables[$tableName]['indexes'][] = $field->name;
-				}
-			}
-		} elseif ($statement instanceof AlterStatement) {
-			$tableName = $statement->table->table ?? null;
-
-			if ($tableName === null) {
-				continue;
-			}
-
-			if (!isset($tables[$tableName])) {
-				$tables[$tableName] = ['columns' => [], 'indexes' => []];
-			}
-
-			foreach ($statement->altered as $altered) {
-				if ($altered->options->has('ADD') && $altered->options->has('INDEX')) {
-					$indexColumns = [];
-
-					if ($altered->field !== null && $altered->field->columns !== null) {
-						$indexColumns = array_map(function ($col) {
-							return $col->name ?? null;
-						}, $altered->field->columns);
-						$indexColumns = array_filter($indexColumns);
-					}
-
-					$tables[$tableName]['indexes'] = array_merge($tables[$tableName]['indexes'], $indexColumns);
 				}
 			}
 		}
@@ -112,169 +71,89 @@ function analyzeIndexes($queryLogStatements, $dbDumpStatements)
 	foreach ($queryLogStatements as $statement) {
 		if ($statement instanceof SelectStatement) {
 			$tableName = $statement->from[0]->table ?? null;
-
-			if ($tableName === null || !isset($tables[$tableName])) {
-				continue;
-			}
+			if ($tableName === null || !isset($tables[$tableName])) continue;
 
 			$tableColumns = array_keys($tables[$tableName]['columns']);
-			$whereColumns = extractColumnNames($statement->where, $tableColumns);
-			$joinColumns = [];
+			$complexityScore = 0;
 
-			if (!empty($statement->join)) {
-				foreach ($statement->join as $join) {
-					if ($join->on !== null) {
-						$joinColumns = array_merge($joinColumns, extractColumnNames($join->on, $tableColumns));
+			// Check for JOINs
+			$complexityScore += isset($statement->join) ? count($statement->join) : 0;
+
+			// Check for WHERE conditions
+			$whereColumns = extractColumnNames($statement->where, $tableColumns);
+			$complexityScore += count($whereColumns);
+
+			// Safely check for ORDER BY
+			$orderByColumns = isset($statement->orderBy) && is_countable($statement->orderBy) ? extractColumnNames($statement->orderBy, $tableColumns) : [];
+			$complexityScore += count($orderByColumns);
+
+			// Safely check for GROUP BY
+			$groupByColumns = isset($statement->groupBy) && is_countable($statement->groupBy) ? extractColumnNames($statement->groupBy, $tableColumns) : [];
+			$complexityScore += count($groupByColumns);
+
+			// Safely check for subqueries
+			$subqueryCount = isset($statement->subquery) && is_countable($statement->subquery) ? count($statement->subquery) : 0;
+			$complexityScore += $subqueryCount > 0 ? 5 : 0;
+
+			$queryComplexity[$tableName] = ($queryComplexity[$tableName] ?? 0) + $complexityScore;
+
+			$usageType = [
+				'filter' => array_merge($whereColumns, extractColumnNames($statement->join, $tableColumns)),
+				'sorting' => array_merge($orderByColumns, $groupByColumns),
+			];
+
+			foreach ($usageType as $type => $columns) {
+				foreach ($columns as $column) {
+					if (!in_array($column, $tables[$tableName]['indexes'])) {
+						$indexUsage[$tableName][$type][$column] = ($indexUsage[$tableName][$type][$column] ?? 0) + 1;
 					}
 				}
 			}
-
-			$allColumns = array_merge($whereColumns, $joinColumns);
-
-			foreach ($allColumns as $column) {
-				if (!in_array($column, $tables[$tableName]['indexes'])) {
-					$missingIndexes[$tableName][$column] = ($missingIndexes[$tableName][$column] ?? 0) + 1;
-				}
-			}
-
-			if (count($allColumns) > 1) {
-				$compoundKey = implode('_', $allColumns);
-				$compoundIndexSuggestions[$tableName][$compoundKey] = ($compoundIndexSuggestions[$tableName][$compoundKey] ?? 0) + 1;
-			}
-
-			$queryStats[$tableName] = ($queryStats[$tableName] ?? 0) + 1;
 		}
 	}
 
-	$optimizedIndexes = [];
-	foreach ($missingIndexes as $table => $columns) {
-		$optimizedIndexes[$table] = [];
-		$singleIndexes = [];
-		$compoundIndexes = [];
-
-		foreach ($compoundIndexSuggestions[$table] ?? [] as $compound => $count) {
-			$compoundColumns = removeDuplicatesPreserveOrder(explode('_', $compound));
-			$compoundIndexes[] = ['columns' => $compoundColumns, 'count' => $count];
-		}
-
-		foreach ($columns as $column => $count) {
-			$singleIndexes[] = ['columns' => [$column], 'count' => $count];
-		}
-
-		usort($compoundIndexes, function ($a, $b) {
-			$colDiff = count($b['columns']) - count($a['columns']);
-			return $colDiff !== 0 ? $colDiff : $b['count'] - $a['count'];
-		});
-
-		foreach ($compoundIndexes as $index) {
-			$isOverlapped = false;
-
-			foreach ($optimizedIndexes[$table] as $existingIndex) {
-				if (count(array_intersect($index['columns'], $existingIndex['columns'])) === count($index['columns'])) {
-					$isOverlapped = true;
-					break;
-				}
-			}
-
-			if (!$isOverlapped) {
-				$optimizedIndexes[$table][] = $index;
-			}
-		}
-
-		foreach ($singleIndexes as $index) {
-			$isIncluded = false;
-			foreach ($optimizedIndexes[$table] as $existingIndex) {
-				if (in_array($index['columns'][0], $existingIndex['columns'])) {
-					$isIncluded = true;
-					break;
-				}
-			}
-			if (!$isIncluded) {
-				$optimizedIndexes[$table][] = $index;
-			}
-		}
-	}
-
-	$impactScores = [];
-	foreach ($optimizedIndexes as $table => $indexes) {
-		foreach ($indexes as $index) {
-			$impactScores[] = [
-				'table' => $table,
-				'columns' => $index['columns'],
-				'type' => count($index['columns']) > 1 ? 'compound' : 'single',
-				'count' => $index['count'],
-				'impact' => $index['count'] / $queryStats[$table]
-			];
-		}
-	}
-
-	usort($impactScores, function ($a, $b) {
-		return $b['impact'] <=> $a['impact'];
-	});
-
-	return [
-		'impactScores' => $impactScores,
-		'optimizationSuggestions' => $optimizationSuggestions,
-		'queryStats' => $queryStats,
-		'tables' => $tables,
-	];
+	return compact('indexUsage', 'queryComplexity', 'tables');
 }
 
-function removeDuplicatesPreserveOrder($array)
+function generateCreateIndexQuery($table, $columns, $tables, $prefixLength)
 {
-	$result = [];
-	$seen = [];
-	foreach ($array as $item) {
-		if (!isset($seen[$item])) {
-			$seen[$item] = true;
-			$result[] = $item;
-		}
-	}
-	return $result;
-}
-
-function generateCreateIndexQuery($table, $columns, $tables)
-{
-	$uniqueColumns = removeDuplicatesPreserveOrder($columns);
-	$indexName = "idx_" . $table . "_" . implode("_", $uniqueColumns);
-	$columnList = implode(", ", array_map(function ($col) use ($tables, $table) {
-		$type = $tables[$table]['columns'][$col] ?? 'unknown';
-
-		if (in_array(strtolower($type), ['char', 'varchar', 'text'])) {
-			return "$col(10)";
+	$uniqueColumns = array_unique($columns);
+	$indexName = "idx_" . $table . "_" . substr(md5(implode('_', $uniqueColumns)), 0, 8);
+	$columnList = implode(", ", array_map(function ($col) use ($tables, $table, $prefixLength) {
+		$type = strtolower($tables[$table]['columns'][$col] ?? 'unknown');
+		if (in_array($type, ['char', 'varchar', 'text'])) {
+			return "$col(" . min($prefixLength, 20) . ")";
 		}
 		return $col;
 	}, $uniqueColumns));
-
 	return "ALTER TABLE $table ADD INDEX $indexName ($columnList);";
 }
 
 $queryLogStatements = parseFile($queryLogFile);
 $dbDumpStatements = parseFile($dbDumpFile);
-
 $analysis = analyzeIndexes($queryLogStatements, $dbDumpStatements);
 
-echo "Query Statistics:\n";
-foreach ($analysis['queryStats'] as $table => $count) {
-	echo "  Table: $table, Query Count: $count\n";
+echo "Query Complexity Scores:\n";
+foreach ($analysis['queryComplexity'] as $table => $score) {
+	echo "  Table: $table, Complexity Score: $score\n";
 }
 
-echo "\nOptimization Suggestions:\n";
-foreach ($analysis['optimizationSuggestions'] as $suggestion) {
-	echo "  - $suggestion\n";
+echo "\nIndex Suggestions:\n";
+$totalSuggestions = 0;
+foreach ($analysis['indexUsage'] as $table => $types) {
+	foreach ($types as $type => $columns) {
+		echo "  [$type indexes for $table]:\n";
+		foreach ($columns as $column => $count) {
+			echo "    - Column: $column (Usage: $count)\n";
+			echo "      " . generateCreateIndexQuery($table, [$column], $analysis['tables'], $prefixLength) . "\n";
+			$totalSuggestions++;
+		}
+	}
 }
 
-echo "\nIndex Suggestions (sorted by potential impact):\n";
-foreach ($analysis['impactScores'] as $score) {
-	$impactPercentage = round($score['impact'] * 100, 2);
-	echo "  Table: {$score['table']}\n";
-	echo "    " . ($score['type'] === 'single' ? "Column" : "Compound Index") . ": " . implode(", ", $score['columns']) . "\n";
-	echo "    Occurrences: {$score['count']}\n";
-	echo "    Potential Impact: {$impactPercentage}%\n";
-	echo "\n";
-}
+echo "\n🔍 Summary Report:\n";
+echo "Total Tables Analyzed: " . count($analysis['tables']) . "\n";
+echo "Total Index Suggestions: $totalSuggestions\n";
 
-echo "\nSuggested Queries:\n";
-foreach ($analysis['impactScores'] as $score) {
-	echo generateCreateIndexQuery($score['table'], $score['columns'], $analysis['tables']) . "\n";
-}
+$mostComplexTable = array_keys($analysis['queryComplexity'], max($analysis['queryComplexity']))[0];
+echo "Most Complex Query Table: $mostComplexTable (Score: " . max($analysis['queryComplexity']) . ")\n";
