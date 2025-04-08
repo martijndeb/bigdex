@@ -50,137 +50,52 @@ The script will analyze your query log and database structure, and output:
 Using the provided example files, the script outputs the following results.
 
 ```
-Query Statistics:
-  Table: characters, Query Count: 7
-  Table: time_machines, Query Count: 3
-  Table: time_travels, Query Count: 3
-  Table: inventions, Query Count: 3
+Query Complexity Scores:
+  Table: characters, Complexity Score: 13
+  Table: time_machines, Complexity Score: 4
+  Table: time_travels, Complexity Score: 5
+  Table: inventions, Complexity Score: 4
 
-Optimization Suggestions:
+Index Suggestions:
+  [filter indexes for characters]:
+    - Column: last_name (Usage: 3)
+      ALTER TABLE characters ADD INDEX idx_characters_7d4553c0 (last_name(10));
+    - Column: first_name (Usage: 2)
+      ALTER TABLE characters ADD INDEX idx_characters_2a034e9d (first_name(10));
+    - Column: birth_year (Usage: 3)
+      ALTER TABLE characters ADD INDEX idx_characters_ac95d840 (birth_year);
+    - Column: occupation (Usage: 2)
+      ALTER TABLE characters ADD INDEX idx_characters_8b7eee43 (occupation(10));
+  [filter indexes for time_machines]:
+    - Column: name (Usage: 1)
+      ALTER TABLE time_machines ADD INDEX idx_time_machines_b068931c (name(10));
+    - Column: fuel (Usage: 1)
+      ALTER TABLE time_machines ADD INDEX idx_time_machines_7c4e4db5 (fuel(10));
+    - Column: max_year (Usage: 1)
+      ALTER TABLE time_machines ADD INDEX idx_time_machines_f7612836 (max_year);
+    - Column: min_year (Usage: 1)
+      ALTER TABLE time_machines ADD INDEX idx_time_machines_34eaefd3 (min_year);
+  [filter indexes for time_travels]:
+    - Column: character_id (Usage: 1)
+      ALTER TABLE time_travels ADD INDEX idx_time_travels_bf21153f (character_id);
+    - Column: departure_year (Usage: 1)
+      ALTER TABLE time_travels ADD INDEX idx_time_travels_c2bdfa49 (departure_year);
+    - Column: arrival_year (Usage: 1)
+      ALTER TABLE time_travels ADD INDEX idx_time_travels_76c8ae7a (arrival_year);
+    - Column: purpose (Usage: 1)
+      ALTER TABLE time_travels ADD INDEX idx_time_travels_4d066bbb (purpose(10));
+  [filter indexes for inventions]:
+    - Column: inventor_id (Usage: 1)
+      ALTER TABLE inventions ADD INDEX idx_inventions_eb70fe4f (inventor_id);
+    - Column: year_created (Usage: 1)
+      ALTER TABLE inventions ADD INDEX idx_inventions_73ed77d2 (year_created);
+    - Column: name (Usage: 1)
+      ALTER TABLE inventions ADD INDEX idx_inventions_b068931c (name(10));
 
-Index Suggestions (sorted by potential impact):
-  Table: time_travels
-    Column: character_id
-    Occurrences: 2
-    Potential Impact: 66.67%
-
-  Table: inventions
-    Column: inventor_id
-    Occurrences: 2
-    Potential Impact: 66.67%
-
-  Table: characters
-    Column: last_name
-    Occurrences: 3
-    Potential Impact: 42.86%
-
-  Table: characters
-    Column: birth_year
-    Occurrences: 3
-    Potential Impact: 42.86%
-
-  Table: time_machines
-    Compound Index: max, year, min
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: time_machines
-    Column: name
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: time_machines
-    Column: fuel
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: time_machines
-    Column: max_year
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: time_machines
-    Column: min_year
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: time_travels
-    Compound Index: departure, year, arrival
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: time_travels
-    Compound Index: purpose, character, id
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: time_travels
-    Column: departure_year
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: time_travels
-    Column: arrival_year
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: inventions
-    Compound Index: name, inventor, id
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: inventions
-    Column: year_created
-    Occurrences: 1
-    Potential Impact: 33.33%
-
-  Table: characters
-    Column: first_name
-    Occurrences: 2
-    Potential Impact: 28.57%
-
-  Table: characters
-    Compound Index: first, name, birth, year
-    Occurrences: 1
-    Potential Impact: 14.29%
-
-  Table: characters
-    Compound Index: occupation, birth, year, id
-    Occurrences: 1
-    Potential Impact: 14.29%
-
-  Table: characters
-    Compound Index: first, name, last
-    Occurrences: 1
-    Potential Impact: 14.29%
-
-  Table: characters
-    Compound Index: last, name, id
-    Occurrences: 1
-    Potential Impact: 14.29%
-
-
-Suggested Queries:
-ALTER TABLE time_travels ADD INDEX idx_time_travels_character_id (character_id);
-ALTER TABLE inventions ADD INDEX idx_inventions_inventor_id (inventor_id);
-ALTER TABLE characters ADD INDEX idx_characters_last_name (last_name(10));
-ALTER TABLE characters ADD INDEX idx_characters_birth_year (birth_year);
-ALTER TABLE time_machines ADD INDEX idx_time_machines_max_year_min (max, year, min);
-ALTER TABLE time_machines ADD INDEX idx_time_machines_name (name(10));
-ALTER TABLE time_machines ADD INDEX idx_time_machines_fuel (fuel(10));
-ALTER TABLE time_machines ADD INDEX idx_time_machines_max_year (max_year);
-ALTER TABLE time_machines ADD INDEX idx_time_machines_min_year (min_year);
-ALTER TABLE time_travels ADD INDEX idx_time_travels_departure_year_arrival (departure, year, arrival);
-ALTER TABLE time_travels ADD INDEX idx_time_travels_purpose_character_id (purpose(10), character, id);
-ALTER TABLE time_travels ADD INDEX idx_time_travels_departure_year (departure_year);
-ALTER TABLE time_travels ADD INDEX idx_time_travels_arrival_year (arrival_year);
-ALTER TABLE inventions ADD INDEX idx_inventions_name_inventor_id (name(10), inventor, id);
-ALTER TABLE inventions ADD INDEX idx_inventions_year_created (year_created);
-ALTER TABLE characters ADD INDEX idx_characters_first_name (first_name(10));
-ALTER TABLE characters ADD INDEX idx_characters_first_name_birth_year (first, name, birth, year);
-ALTER TABLE characters ADD INDEX idx_characters_occupation_birth_year_id (occupation(10), birth, year, id);
-ALTER TABLE characters ADD INDEX idx_characters_first_name_last (first, name, last);
-ALTER TABLE characters ADD INDEX idx_characters_last_name_id (last, name, id);
+🔍 Summary Report:
+Total Tables Analyzed: 4
+Total Index Suggestions: 15
+Most Complex Query Table: characters (Score: 13)
 ```
 
 ## Note
